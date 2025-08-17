@@ -26,7 +26,7 @@ public class UserService  implements UserServiceInterface{
 
 	@Transactional(propagation = Propagation.REQUIRED)
 	public void test() {
-		// System.out.println(userMapper.selectById());
+		System.out.println(userMapper.selectById());
 		// System.out.println(orderMapper.selectById());
 		// System.out.println(memberMapper.selectById());
 		System.out.println("test");
