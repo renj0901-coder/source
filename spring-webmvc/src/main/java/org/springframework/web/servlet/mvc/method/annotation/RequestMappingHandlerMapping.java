@@ -249,15 +249,65 @@ public class RequestMappingHandlerMapping extends RequestMappingInfoHandlerMappi
 
 
 	/**
-	 * {@inheritDoc}
-	 * <p>Expects a handler to have either a type-level @{@link Controller}
-	 * annotation or a type-level @{@link RequestMapping} annotation.
+	 * 判断给定的bean类型是否为处理器（Handler）
+	 * <p>这是一个模板方法，由父类AbstractHandlerMethodMapping在注册处理器方法时调用
+	 * <p>对于RequestMappingHandlerMapping来说，处理器必须满足以下条件之一：
+	 * <ol>
+	 *   <li>类上标注了@Controller注解</li>
+	 *   <li>类上标注了@RequestMapping注解</li>
+	 * </ol>
+	 *
+	 * @param beanType 要检查的bean类型（Class对象）
+	 * @return 如果是处理器则返回true，否则返回false
+	 * <p>
+	 * 判断逻辑：
+	 * 1. 使用AnnotatedElementUtils.hasAnnotation工具方法检查类上是否有@Controller注解
+	 * - @Controller是Spring MVC中标识控制器组件的标准注解
+	 * - 该方法能正确处理注解的继承和组合情况
+	 * <p>
+	 * 2. 或者检查类上是否有@RequestMapping注解
+	 * - @RequestMapping可以直接标注在类上，使其成为一个处理器
+	 * - 这种方式通常用于传统的基于注解的控制器，而不使用@Controller
+	 * <p>
+	 * 3. 只要满足其中一个条件，该类就会被认为是处理器，其方法会被进一步检查是否有@RequestMapping注解
+	 * <p>
+	 * 调用时机：
+	 * - 在Spring容器初始化过程中，当注册处理器方法时
+	 * - AbstractHandlerMethodMapping会扫描所有bean，对每个bean调用此方法
+	 * - 如果返回true，则会继续检查该类的方法是否有@RequestMapping注解
+	 * <p>
+	 * 示例：
+	 * <pre>
+	 * {@code
+	 * @Controller          // 符合条件1：有@Controller注解
+	 * public class UserController {
+	 *     @RequestMapping("/users")
+	 *     public String list() { return "userList"; }
+	 * }
+	 *
+	 * @RequestMapping("/api")  // 符合条件2：有@RequestMapping注解
+	 * public class ApiController {
+	 *     @GetMapping("/data")
+	 *     public String getData() { return "data"; }
+	 * }
+	 *
+	 * public class NormalBean {    // 不符合条件：既没有@Controller也没有@RequestMapping
+	 *     public void doSomething() {}
+	 * }
+	 * }
+	 * </pre>
+	 * @see AnnotatedElementUtils#hasAnnotation(AnnotatedElement, Class)
+	 * @see Controller
+	 * @see RequestMapping
+	 * @see AbstractHandlerMethodMapping#detectHandlerMethods(Object)
 	 */
 	@Override
 	protected boolean isHandler(Class<?> beanType) {
+		// 检查类上是否有@Controller注解 或者 类上是否有@RequestMapping注解
 		return (AnnotatedElementUtils.hasAnnotation(beanType, Controller.class) ||
 				AnnotatedElementUtils.hasAnnotation(beanType, RequestMapping.class));
 	}
+
 
 	/**
 	 * Uses method and type-level @{@link RequestMapping} annotations to create

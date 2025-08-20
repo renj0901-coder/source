@@ -563,24 +563,78 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 	}
 
 
+	/**
+	 * 在Bean属性设置完成后执行的初始化方法
+	 * <p>这是InitializingBean接口的回调方法，在所有必需的属性被设置后由BeanFactory调用
+	 * <p>主要用于初始化RequestMappingHandlerAdapter的各种组件，包括参数解析器、返回值处理器等
+	 * <p>
+	 * 执行顺序：
+	 * 1. 首先初始化@ControllerAdvice相关的缓存
+	 * 2. 初始化方法参数解析器
+	 * 3. 初始化@InitBinder方法的参数解析器
+	 * 4. 初始化返回值处理器
+	 * <p>
+	 * 这些组件是RequestMappingHandlerAdapter的核心组成部分，用于：
+	 * - 参数解析器(HandlerMethodArgumentResolver)：将HTTP请求参数转换为控制器方法参数
+	 * - 返回值处理器(HandlerMethodReturnValueHandler)：处理控制器方法的返回值
+	 * - @InitBinder参数解析器：处理数据绑定初始化方法的参数
+	 * <p>
+	 * 初始化时机：
+	 * - Spring容器启动时，当RequestMappingHandlerAdapter Bean创建完成后
+	 * - 在DispatcherServlet初始化HandlerAdapters时触发
+	 * - 确保在第一次处理请求前所有必要组件都已准备就绪
+	 *
+	 * @see InitializingBean#afterPropertiesSet()
+	 * @see #initControllerAdviceCache()
+	 * @see #getDefaultArgumentResolvers()
+	 * @see #getDefaultInitBinderArgumentResolvers()
+	 * @see #getDefaultReturnValueHandlers()
+	 */
 	@Override
 	public void afterPropertiesSet() {
-		// Do this first, it may add ResponseBody advice beans
+		// 首先初始化@ControllerAdvice相关的缓存
+		// 这可能添加一些ResponseBodyAdvice beans到requestResponseBodyAdvice列表中
+		// @ControllerAdvice注解的类中可能包含@ModelAttribute、@InitBinder、ResponseBodyAdvice等组件
 		initControllerAdviceCache();
-		// 参数解析器
+
+		// 初始化方法参数解析器
+		// 如果argumentResolvers尚未设置（为null），则使用默认的参数解析器
 		if (this.argumentResolvers == null) {
+			// 获取默认的参数解析器列表
+			// 包括@RequestParam、@PathVariable、@RequestBody、@RequestHeader等各种注解的解析器
 			List<HandlerMethodArgumentResolver> resolvers = getDefaultArgumentResolvers();
+
+			// 创建复合参数解析器，将所有解析器组合在一起
+			// HandlerMethodArgumentResolverComposite是一个组合模式的实现
+			// 它可以按顺序尝试每个解析器，直到找到能处理特定参数的解析器
 			this.argumentResolvers = new HandlerMethodArgumentResolverComposite().addResolvers(resolvers);
-		}//数据绑定器参数解析器
+		}
+
+		// 初始化@InitBinder方法的参数解析器
+		// @InitBinder注解的方法用于初始化WebDataBinder，进行数据绑定前的自定义处理
 		if (this.initBinderArgumentResolvers == null) {
+			// 获取默认的@InitBinder方法参数解析器
+			// 这些解析器专门用于处理@InitBinder注解方法的参数
 			List<HandlerMethodArgumentResolver> resolvers = getDefaultInitBinderArgumentResolvers();
+
+			// 创建复合参数解析器用于@InitBinder方法
 			this.initBinderArgumentResolvers = new HandlerMethodArgumentResolverComposite().addResolvers(resolvers);
-		}// 返回值处理器
+		}
+
+		// 初始化返回值处理器
+		// 如果returnValueHandlers尚未设置（为null），则使用默认的返回值处理器
 		if (this.returnValueHandlers == null) {
+			// 获取默认的返回值处理器列表
+			// 包括处理ModelAndView、String视图名、@ResponseBody、ResponseEntity等各种返回类型的处理器
 			List<HandlerMethodReturnValueHandler> handlers = getDefaultReturnValueHandlers();
+
+			// 创建复合返回值处理器，将所有处理器组合在一起
+			// HandlerMethodReturnValueHandlerComposite是一个组合模式的实现
+			// 它可以按顺序尝试每个处理器，直到找到能处理特定返回值的处理器
 			this.returnValueHandlers = new HandlerMethodReturnValueHandlerComposite().addHandlers(handlers);
 		}
 	}
+
 
 	private void initControllerAdviceCache() {
 		if (getApplicationContext() == null) {
@@ -638,55 +692,152 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 	}
 
 	/**
-	 * Return the list of argument resolvers to use including built-in resolvers
-	 * and custom resolvers provided via {@link #setCustomArgumentResolvers}.
+	 * 返回要使用的参数解析器列表，包括内置解析器和通过{@link #setCustomArgumentResolvers}提供的自定义解析器
+	 * <p>这些解析器用于处理控制器方法的参数，将HTTP请求中的数据转换为方法参数
+	 * <p>解析器按照添加顺序进行匹配，第一个支持特定参数的解析器将被使用
+	 * <p>
+	 * 参数解析器的分类和作用：
+	 * 1. 基于注解的参数解析 - 处理各种Spring MVC注解
+	 * 2. 基于类型的参数解析 - 处理特定类型的参数
+	 * 3. 自定义参数解析器 - 用户提供的扩展解析器
+	 * 4. 兜底参数解析器 - 处理剩余的参数类型
+	 * <p>
+	 * 执行顺序很重要，因为第一个匹配的解析器会被使用
+	 *
+	 * @return HandlerMethodArgumentResolver列表，用于解析控制器方法参数
+	 * @see HandlerMethodArgumentResolver
+	 * @see #setCustomArgumentResolvers(List)
 	 */
 	private List<HandlerMethodArgumentResolver> getDefaultArgumentResolvers() {
+		// 创建参数解析器列表，初始容量30以避免频繁扩容
 		List<HandlerMethodArgumentResolver> resolvers = new ArrayList<>(30);
 
-		// Annotation-based argument resolution
+		// ********** 基于注解的参数解析 **********
+		// 处理@RequestParam注解的参数（非默认模式）
+		// 用于解析请求参数，如@RequestParam("name") String userName
 		resolvers.add(new RequestParamMethodArgumentResolver(getBeanFactory(), false));
+
+		// 处理@RequestParam注解的Map类型参数
+		// 用于将所有请求参数封装到Map中，如@RequestParam Map<String, String> params
 		resolvers.add(new RequestParamMapMethodArgumentResolver());
+
+		// 处理@PathVariable注解的参数
+		// 用于解析URL路径变量，如@GetMapping("/users/{id}")中的{id}
 		resolvers.add(new PathVariableMethodArgumentResolver());
+
+		// 处理@PathVariable注解的Map类型参数
+		// 用于将所有路径变量封装到Map中
 		resolvers.add(new PathVariableMapMethodArgumentResolver());
+
+		// 处理@MatrixVariable注解的参数
+		// 用于解析矩阵变量，如/users;name=John/profile
 		resolvers.add(new MatrixVariableMethodArgumentResolver());
+
+		// 处理@MatrixVariable注解的Map类型参数
 		resolvers.add(new MatrixVariableMapMethodArgumentResolver());
+
+		// 处理模型属性参数（非默认模式）
+		// 用于处理复杂对象的自动绑定，如User user参数
 		resolvers.add(new ServletModelAttributeMethodProcessor(false));
+
+		// 处理@RequestBody和@ResponseBody注解的参数
+		// 用于JSON/XML等格式的数据转换
 		resolvers.add(new RequestResponseBodyMethodProcessor(getMessageConverters(), this.requestResponseBodyAdvice));
+
+		// 处理@RequestPart注解的参数
+		// 用于处理multipart请求中的部分数据
 		resolvers.add(new RequestPartMethodArgumentResolver(getMessageConverters(), this.requestResponseBodyAdvice));
+
+		// 处理@RequestHeader注解的参数
+		// 用于解析HTTP请求头，如@RequestHeader("User-Agent") String userAgent
 		resolvers.add(new RequestHeaderMethodArgumentResolver(getBeanFactory()));
+
+		// 处理@RequestHeader注解的Map类型参数
+		// 用于将所有请求头封装到Map中
 		resolvers.add(new RequestHeaderMapMethodArgumentResolver());
+
+		// 处理@CookieValue注解的参数
+		// 用于解析Cookie值，如@CookieValue("JSESSIONID") String sessionId
 		resolvers.add(new ServletCookieValueMethodArgumentResolver(getBeanFactory()));
+
+		// 处理@Value注解的参数
+		// 用于解析SpEL表达式值
 		resolvers.add(new ExpressionValueMethodArgumentResolver(getBeanFactory()));
+
+		// 处理@SessionAttribute注解的参数
+		// 用于从session中获取属性值
 		resolvers.add(new SessionAttributeMethodArgumentResolver());
+
+		// 处理@RequestAttribute注解的参数
+		// 用于从request属性中获取值
 		resolvers.add(new RequestAttributeMethodArgumentResolver());
 
-		// Type-based argument resolution
+		// ********** 基于类型的参数解析 **********
+		// 处理HttpServletRequest类型的参数
+		// 控制器可以直接注入原生Servlet请求对象
 		resolvers.add(new ServletRequestMethodArgumentResolver());
+
+		// 处理HttpServletResponse类型的参数
+		// 控制器可以直接注入原生Servlet响应对象
 		resolvers.add(new ServletResponseMethodArgumentResolver());
+
+		// 处理HttpEntity类型的参数
+		// 用于处理完整的HTTP请求实体
 		resolvers.add(new HttpEntityMethodProcessor(getMessageConverters(), this.requestResponseBodyAdvice));
+
+		// 处理RedirectAttributes类型的参数
+		// 用于重定向时传递flash属性
 		resolvers.add(new RedirectAttributesMethodArgumentResolver());
+
+		// 处理Model类型的参数
+		// 用于向视图传递模型数据
 		resolvers.add(new ModelMethodProcessor());
+
+		// 处理Map类型的参数
+		// 用于向视图传递键值对数据
 		resolvers.add(new MapMethodProcessor());
+
+		// 处理Errors和BindingResult类型的参数
+		// 用于获取数据绑定和验证错误
 		resolvers.add(new ErrorsMethodArgumentResolver());
+
+		// 处理SessionStatus类型的参数
+		// 用于标记session完成状态
 		resolvers.add(new SessionStatusMethodArgumentResolver());
+
+		// 处理UriComponentsBuilder类型的参数
+		// 用于构建URI组件
 		resolvers.add(new UriComponentsBuilderMethodArgumentResolver());
+
+		// 如果Kotlin存在，添加对协程的支持
 		if (KotlinDetector.isKotlinPresent()) {
 			resolvers.add(new ContinuationHandlerMethodArgumentResolver());
 		}
 
-		// Custom arguments
+		// ********** 自定义参数解析器 **********
+		// 添加用户自定义的参数解析器
+		// 这些解析器具有较高的优先级，会在内置解析器之前被检查
 		if (getCustomArgumentResolvers() != null) {
 			resolvers.addAll(getCustomArgumentResolvers());
 		}
 
-		// Catch-all
+		// ********** 兜底参数解析器 **********
+		// 处理Principal类型的参数
+		// 用于获取当前认证用户信息
 		resolvers.add(new PrincipalMethodArgumentResolver());
+
+		// 处理@RequestParam注解的参数（默认模式）
+		// 用于处理简单类型的默认参数绑定
 		resolvers.add(new RequestParamMethodArgumentResolver(getBeanFactory(), true));
+
+		// 处理模型属性参数（默认模式）
+		// 作为最后的选择处理复杂对象绑定
 		resolvers.add(new ServletModelAttributeMethodProcessor(true));
 
+		// 返回完整的参数解析器列表
 		return resolvers;
 	}
+
 
 	/**
 	 * Return the list of argument resolvers to use for {@code @InitBinder}
@@ -782,59 +933,98 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 		return true;
 	}
 
+	/**
+	 * 处理HTTP请求的核心方法，负责调用具体的处理器方法并返回ModelAndView
+	 * <p>这是AbstractHandlerMethodAdapter接口的实现方法，用于处理带有@RequestMapping注解的HandlerMethod
+	 * <p>该方法执行完整的请求处理流程，包括参数解析、方法调用、返回值处理等
+	 * <p>
+	 * 执行流程：
+	 * 1. 请求检查 - 验证请求方法和会话要求
+	 * 2. Session同步处理 - 可选的会话级同步锁
+	 * 3. 方法调用 - 通过invokeHandlerMethod执行实际的处理器方法
+	 * 4. 缓存处理 - 设置响应的缓存控制头
+	 *
+	 * @param request       当前HTTP请求对象
+	 * @param response      当前HTTP响应对象
+	 * @param handlerMethod 要调用的处理器方法，该对象必须已通过{@link #supportsInternal(HandlerMethod)}验证
+	 * @return ModelAndView对象，包含视图信息和模型数据，用于后续的视图渲染
+	 * @throws Exception 处理过程中可能抛出的任何异常
+	 *                   <p>
+	 *                   关键特性：
+	 *                   - Session同步：可配置是否需要对同一会话的请求进行同步处理
+	 *                   - 缓存控制：根据@SessionAttributes注解自动设置缓存策略
+	 *                   - 异常处理：统一的异常处理机制
+	 *                   - 异步支持：支持Servlet 3.0+的异步处理特性
+	 * @see #invokeHandlerMethod(HttpServletRequest, HttpServletResponse, HandlerMethod)
+	 * @see #getSessionAttributesHandler(HandlerMethod)
+	 * @see #checkRequest(HttpServletRequest)
+	 */
 	@Override
 	protected ModelAndView handleInternal(HttpServletRequest request,
-			HttpServletResponse response, HandlerMethod handlerMethod) throws Exception {
+										  HttpServletResponse response, HandlerMethod handlerMethod) throws Exception {
 
 		ModelAndView mav;
 		// 检查当前请求的method是否为支持的method(默认Null,可通过继承AbstractController设置supportedMethods)
 		// 检查当前请求是否必须session  (默认false,可通过继承AbstractController设置requireSession)
+		// 这是一个保护性检查，验证请求是否符合控制器的基本要求
 		checkRequest(request);
 
 		/**
 		 * 判断当前是否需要支持在同一个session中只能线性地处理请求
 		 * 因为锁是通过 synchronized 是 JVM 进程级，所以在分布式环境下，
 		 * 无法达到同步相同 Session 的功能。默认情况下，synchronizeOnSession 为 false
+		 *
+		 * 这个功能主要用于防止同一用户会话中的并发请求导致的数据不一致问题
+		 * 例如：用户同时提交两个表单，可能造成数据覆盖
 		 */
 		if (this.synchronizeOnSession) {
-			// 获取当前请求的session对象
+			// 获取当前请求的session对象，如果不存在则返回null
+			// 使用false参数避免在session不存在时创建新的session
 			HttpSession session = request.getSession(false);
 			if (session != null) {
 				// 为当前session生成一个唯一的可以用于锁定的key
+				// WebUtils.getSessionMutex提供了一个线程安全的session锁机制
+				// 这确保了同一会话的请求会串行执行
 				Object mutex = WebUtils.getSessionMutex(session);
 				synchronized (mutex) {
-					// 对HandlerMethod进行参数等的适配处理，并调用目标handler
+					// *** 对HandlerMethod进行参数等的适配处理，并调用目标handler
+					// 这是实际执行处理器方法的地方
 					mav = invokeHandlerMethod(request, response, handlerMethod);
 				}
-			}
-			else {
+			} else {
 				// 如果当前不存在session，则直接对HandlerMethod进行适配
+				// 没有session的情况下无需同步处理
 				mav = invokeHandlerMethod(request, response, handlerMethod);
 			}
-		}
-		else {
+		} else {
 			// *如果当前不需要对session进行同步处理，则直接对HandlerMethod进行适配
+			// 这是最常见的情况，提高并发处理能力
 			mav = invokeHandlerMethod(request, response, handlerMethod);
 		}
 
-
 		//判断当前请求头中是否包含Cache-Control请求头，如果不包含，则对当前response进行处理
+		// 这是为了避免覆盖已经设置的缓存控制头
 		if (!response.containsHeader(HEADER_CACHE_CONTROL)) {
 			// 如果当前SessionAttribute中存在配置的attributes，则为其设置过期时间。
 			// 这里SessionAttribute主要是通过@SessionAttribute注解生成的
+			// 检查当前处理器是否使用了@SessionAttributes注解
 			if (getSessionAttributesHandler(handlerMethod).hasSessionAttributes()) {
+				// 为使用了@SessionAttributes的处理器设置特定的缓存时间
+				// 这些处理器通常处理与会话相关的数据
 				applyCacheSeconds(response, this.cacheSecondsForSessionAttributeHandlers);
-			}
-			else {
+			} else {
 				// 如果当前不存在SessionAttributes，则判断当前是否存在Cache-Control设置，
 				// 如果存在，则按照该设置进行response处理，如果不存在，则设置response中的
 				// Cache的过期时间为-1，即立即失效
+				// 对于不使用会话属性的处理器，采用默认的缓存策略
 				prepareResponse(response);
 			}
 		}
 
+		// 返回处理结果，可能包含视图信息和模型数据
 		return mav;
 	}
+
 
 	/**
 	 * This implementation always returns -1. An {@code @RequestMapping} method can
@@ -927,7 +1117,7 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 				});
 				invocableMethod = invocableMethod.wrapConcurrentResult(result);
 			}
-			// *对请求参数进行处理，调用目标HandlerMethod，并且将返回值封装为一个ModelAndView对象
+			// ****对请求参数进行处理，调用目标HandlerMethod，并且将返回值封装为一个ModelAndView对象
 			invocableMethod.invokeAndHandle(webRequest, mavContainer);
 			if (asyncManager.isConcurrentHandlingStarted()) {
 				return null;

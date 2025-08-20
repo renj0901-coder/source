@@ -443,7 +443,9 @@ public abstract class AbstractUrlHandlerMapping extends AbstractHandlerMapping i
 				setDefaultHandler(resolvedHandler);
 			}
 			else {
+				// 将解析后的处理器映射到指定的URL路径
 				this.handlerMap.put(urlPath, resolvedHandler);
+
 				if (getPatternParser() != null) {
 					this.pathPatternHandlerMap.put(getPatternParser().parse(urlPath), resolvedHandler);
 				}

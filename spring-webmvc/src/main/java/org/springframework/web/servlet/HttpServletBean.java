@@ -139,39 +139,51 @@ public abstract class HttpServletBean extends HttpServlet implements Environment
 		return new StandardServletEnvironment();
 	}
 
-	/**
-	 * Map config parameters onto bean properties of this servlet, and
-	 * invoke subclass initialization.
-	 * @throws ServletException if bean properties are invalid (or required
-	 * properties are missing), or if subclass initialization fails.
-	 */
-	@Override
-	public final void init() throws ServletException {
-
-		// 解析 init-param 并封装只 pvs 中(xml)
-		PropertyValues pvs = new ServletConfigPropertyValues(getServletConfig(), this.requiredProperties);
-		if (!pvs.isEmpty()) {
-			try {
-				// 将当前的这个 Servlet 类转化为一个 BeanWrapper，从而能够以 Spring 的方法来对 init-param 的值进行注入
-				BeanWrapper bw = PropertyAccessorFactory.forBeanPropertyAccess(this);
-				ResourceLoader resourceLoader = new ServletContextResourceLoader(getServletContext());
-				bw.registerCustomEditor(Resource.class, new ResourceEditor(resourceLoader, getEnvironment()));
-				initBeanWrapper(bw);
-				// 属性注入
-				bw.setPropertyValues(pvs, true);
-			}
-			catch (BeansException ex) {
-				if (logger.isErrorEnabled()) {
-					logger.error("Failed to set bean properties on servlet '" + getServletName() + "'", ex);
-				}
-				throw ex;
-			}
+/**
+ * Servlet初始化方法，负责将Servlet配置参数映射到Bean属性并调用子类初始化。
+ * <p>该方法是Servlet的入口初始化方法，在Servlet实例创建后自动调用。
+ * 主要完成以下工作：
+ * <ol>
+ *   <li>解析Servlet配置中的init-param参数并封装为PropertyValues</li>
+ *   <li>将配置参数值注入到Servlet实例的对应属性中</li>
+ *   <li>调用子类的自定义初始化逻辑</li>
+ * </ol>
+ * <p>注入过程使用Spring的BeanWrapper机制，支持自动类型转换和自定义编辑器。
+ * 对于标记为必需的属性，会进行校验确保配置完整。
+ *
+ * @throws ServletException 当Bean属性无效、必需属性缺失或子类初始化失败时抛出
+ * @see #addRequiredProperty(String)
+ * @see #initServletBean()
+ * @see javax.servlet.Servlet#init()
+ */
+@Override
+public final void init() throws ServletException {
+	// tomcat启动的时时候会来调这个初始化方法
+	// 解析 init-param 并封装只 pvs 中(xml)
+	PropertyValues pvs = new ServletConfigPropertyValues(getServletConfig(), this.requiredProperties);
+	if (!pvs.isEmpty()) {
+		try {
+			// 将当前的这个 Servlet 类转化为一个 BeanWrapper，从而能够以 Spring 的方法来对 init-param 的值进行注入
+			BeanWrapper bw = PropertyAccessorFactory.forBeanPropertyAccess(this);
+			ResourceLoader resourceLoader = new ServletContextResourceLoader(getServletContext());
+			bw.registerCustomEditor(Resource.class, new ResourceEditor(resourceLoader, getEnvironment()));
+			initBeanWrapper(bw);
+			// 属性注入
+			bw.setPropertyValues(pvs, true);
 		}
-
-		// Let subclasses do whatever initialization they like.
-		// 初始化Servlet，创建Spring容器
-		initServletBean();
+		catch (BeansException ex) {
+			if (logger.isErrorEnabled()) {
+				logger.error("Failed to set bean properties on servlet '" + getServletName() + "'", ex);
+			}
+			throw ex;
+		}
 	}
+
+	// Let subclasses do whatever initialization they like.
+	// ***初始化Servlet，创建Spring容器
+	initServletBean();
+}
+
 
 	/**
 	 * Initialize the BeanWrapper for this HttpServletBean,

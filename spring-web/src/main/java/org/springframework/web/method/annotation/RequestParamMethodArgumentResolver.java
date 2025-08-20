@@ -177,12 +177,20 @@ public class RequestParamMethodArgumentResolver extends AbstractNamedValueMethod
 				arg = (files.size() == 1 ? files.get(0) : files);
 			}
 		}
-		if (arg == null) {// *解析参数值 ： request.getParameter方式
+		if (arg == null) {
+			// *解析参数值 ： 通过request.getParameterValues方式获取请求参数
+			// 当通过多部分解析未获取到参数值时，尝试从标准HTTP请求参数中获取
+			// getParameterValues方法可以处理同名的多个参数值（如复选框等场景）
 			String[] paramValues = request.getParameterValues(name);
 			if (paramValues != null) {
+				// 如果参数值存在，根据参数数量决定返回单个值还是数组
+				// 当只有一个参数值时，返回该值本身（String类型）
+				// 当有多个同名参数值时，返回整个数组（String[]类型）
+				// 这种设计支持了HTML表单中多选框等可以提交多个同名参数的场景
 				arg = (paramValues.length == 1 ? paramValues[0] : paramValues);
 			}
 		}
+
 		return arg;
 	}
 

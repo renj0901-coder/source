@@ -264,7 +264,7 @@ public abstract class AbstractHandlerMethodMapping<T> extends AbstractHandlerMap
 				logger.trace("Could not resolve type for bean '" + beanName + "'", ex);
 			}
 		}
-		// 这一步判断是关键  是否有Controller 或 RequestMapping注解
+		// 这一步判断是关键  是否有@Controller 或 RequestMapping注解（必须加@Component）
 		if (beanType != null && isHandler(beanType)) {
 			// 解析HandlerMethods
 			detectHandlerMethods(beanName);
@@ -272,39 +272,84 @@ public abstract class AbstractHandlerMethodMapping<T> extends AbstractHandlerMap
 	}
 
 	/**
-	 * Look for handler methods in the specified handler bean.
-	 * @param handler either a bean name or an actual handler instance
-	 * @see #getMappingForMethod
+	 * 在指定的处理器bean中查找处理器方法
+	 * <p>该方法负责扫描给定处理器类中的所有方法，识别带有映射注解的方法（如@RequestMapping），
+	 * 并将它们注册为可处理特定请求的处理器方法
+	 *
+	 * @param handler 处理器bean，可以是bean名称（String类型）或实际的处理器实例（Object类型）
+	 *                <p>
+	 *                执行流程：
+	 *                1. 获取处理器类型：根据handler是bean名称还是实例来确定处理器类型
+	 *                2. 获取用户类：如果是CGLIB代理类，则获取其父类（原始类）
+	 *                3. 扫描方法：使用MethodIntrospector扫描类中的所有方法
+	 *                4. 解析映射：对每个方法调用getMappingForMethod()来解析映射信息
+	 *                5. 注册处理器方法：将解析出的有效映射注册到映射注册表中
+	 *                <p>
+	 *                关键点：
+	 *                - 使用MethodIntrospector.selectMethods()方法来高效地扫描和过滤方法
+	 *                - 通过getMappingForMethod()模板方法让子类决定如何解析方法上的映射注解
+	 *                - 使用AopUtils.selectInvocableMethod()处理可能的AOP代理方法
+	 *                - 最终通过registerHandlerMethod()将映射关系注册到系统中
+	 *                <p>
+	 *                调用时机：
+	 *                - 在Spring容器初始化阶段，当发现一个带有@Controller或@RequestMapping注解的bean时
+	 *                - 由processCandidateBean()方法调用
+	 * @see #getMappingForMethod(Method, Class)
+	 * @see #registerHandlerMethod(Object, Method, Object)
+	 * @see MethodIntrospector#selectMethods(Class, MethodIntrospector.MetadataLookup)
+	 * @see AopUtils#selectInvocableMethod(Method, Class)
 	 */
 	protected void detectHandlerMethods(Object handler) {
+		// 确定处理器类型
+		// 如果handler是String类型，说明是bean名称，需要从ApplicationContext中获取类型
+		// 如果handler是对象实例，则直接获取其Class类型
 		Class<?> handlerType = (handler instanceof String ?
 				obtainApplicationContext().getType((String) handler) : handler.getClass());
 
+		// 确保处理器类型不为null
 		if (handlerType != null) {
+			// 获取用户类：如果handlerType是CGLIB代理类，ClassUtils.getUserClass会返回其父类（原始类）
+			// 这样可以确保我们扫描的是用户定义的原始类，而不是Spring生成的代理类
 			Class<?> userType = ClassUtils.getUserClass(handlerType);
-			// 循环所有方法
+
+
+			// methods key 是Method  value 是RequestMappingInfo
+			// 循环扫描类中的所有方法，筛选出带有映射注解的方法
+			// MethodIntrospector.selectMethods()是一个高效的工具方法，用于扫描类的方法并应用过滤器
 			Map<Method, T> methods = MethodIntrospector.selectMethods(userType,
+					// MetadataLookup函数式接口：对每个方法执行此lambda表达式来决定是否包含该方法
 					(MethodIntrospector.MetadataLookup<T>) method -> {
 						try {
+							// 解析方法上的映射信息
+							// 这是一个模板方法，由子类实现具体的映射解析逻辑
+							// 例如RequestMappingHandlerMapping会检查方法上是否有@RequestMapping注解
 							return getMappingForMethod(method, userType);
-						}
-						catch (Throwable ex) {
+						} catch (Throwable ex) {
+							// 如果解析映射时发生异常，抛出IllegalStateException
 							throw new IllegalStateException("Invalid mapping on handler class [" +
 									userType.getName() + "]: " + method, ex);
 						}
-			});
+					});
+
 			if (logger.isTraceEnabled()) {
 				logger.trace(formatMappings(userType, methods));
-			}
-			else if (mappingsLogger.isDebugEnabled()) {
+			} else if (mappingsLogger.isDebugEnabled()) {
 				mappingsLogger.debug(formatMappings(userType, methods));
 			}
+
+			// 遍历所有找到的映射方法，将其注册到映射注册表中
 			methods.forEach((method, mapping) -> {
+				// 使用AopUtils.selectInvocableMethod()选择可调用的方法
+				// 这是为了处理AOP代理的情况，确保选择到正确的方法引用
 				Method invocableMethod = AopUtils.selectInvocableMethod(method, userType);
+
+				// 注册处理器方法：将方法映射关系存储到映射注册表中
+				// 这样在处理请求时就能根据URL找到对应的处理器方法
 				registerHandlerMethod(handler, invocableMethod, mapping);
 			});
 		}
 	}
+
 
 	private String formatMappings(Class<?> userType, Map<Method, T> methods) {
 		String formattedType = Arrays.stream(ClassUtils.getPackageName(userType).split("\\."))
@@ -657,22 +702,77 @@ public abstract class AbstractHandlerMethodMapping<T> extends AbstractHandlerMap
 			this.readWriteLock.readLock().unlock();
 		}
 
+		/**
+		 * 注册一个处理器方法及其映射关系
+		 * <p>该方法将处理器方法与映射条件关联起来，并存储在各种索引结构中以便后续快速查找
+		 *
+		 * @param mapping 映射条件对象，包含匹配请求所需的所有条件（如路径、方法、参数等）
+		 * @param handler 处理器对象，可以是bean名称(String)或实际的处理器实例(Object)
+		 * @param method  处理器方法，即实际处理请求的Method对象
+		 *                <p>
+		 *                注册过程：
+		 *                1. 获取写锁：确保线程安全，防止并发注册导致数据不一致
+		 *                2. 创建HandlerMethod：将处理器和方法封装成HandlerMethod对象
+		 *                3. 验证映射：检查是否已存在相同的映射，避免重复注册
+		 *                4. 构建路径索引：将直接路径与映射关系建立索引，提高查找效率
+		 *                5. 处理命名策略：如果配置了命名策略，为映射分配名称并建立名称索引
+		 *                6. 处理CORS配置：初始化并存储跨域配置信息
+		 *                7. 存储注册信息：将完整的映射注册信息存储到主注册表中
+		 *                <p>
+		 *                数据结构说明：
+		 *                - registry：主注册表，存储映射到MappingRegistration的完整映射关系
+		 *                - pathLookup：路径查找表，存储路径到映射的快速索引
+		 *                - nameLookup：名称查找表，存储映射名称到处理器方法的索引
+		 *                - corsLookup：CORS配置查找表，存储处理器方法到CORS配置的映射
+		 *                <p>
+		 *                线程安全：
+		 *                - 使用ReentrantReadWriteLock确保并发访问的安全性
+		 *                - 写操作（注册）需要获取写锁
+		 *                - 读操作（查找）需要获取读锁
+		 *                <p>
+		 *                调用时机：
+		 *                - 容器初始化阶段，扫描到@Controller等注解时自动调用
+		 *                - 运行时通过registerMapping()方法手动注册
+		 * @see #createHandlerMethod(Object, Method)
+		 * @see #validateMethodMapping(HandlerMethod, Object)
+		 * @see #getDirectPaths(Object)
+		 * @see #initCorsConfiguration(Object, Method, Object)
+		 */
 		public void register(T mapping, Object handler, Method method) {
+			// 获取写锁，确保注册过程的线程安全
+			// 防止多个线程同时注册导致数据结构不一致
 			this.readWriteLock.writeLock().lock();
 			try {
+				// 创建HandlerMethod对象，封装处理器和方法信息
+				// HandlerMethod包含了处理请求所需的所有信息：bean实例、方法引用等
 				HandlerMethod handlerMethod = createHandlerMethod(handler, method);
+
+				// 验证方法映射，防止重复注册相同的映射
+				// 如果已存在相同的映射且对应的处理器方法不同，则抛出异常
 				validateMethodMapping(handlerMethod, mapping);
 
+				// 获取映射的直接路径集合（不包含模式匹配的路径）
+				// directPaths是精确匹配的路径，如"/users"，不包括"/users/*"这样的模式
 				Set<String> directPaths = AbstractHandlerMethodMapping.this.getDirectPaths(mapping);
+
+				// 为每个直接路径建立索引，提高请求处理时的查找效率
+				// pathLookup是一个MultiValueMap，支持一个路径对应多个映射
 				for (String path : directPaths) {
+					// 路径 --->注解  先根据路径和请求方式找到对应的注解
 					this.pathLookup.add(path, mapping);
 				}
 
+				// 处理映射命名策略
 				String name = null;
+				// 如果配置了命名策略，则为映射生成名称
 				if (getNamingStrategy() != null) {
+					// 使用命名策略生成映射名称，通常基于类名和方法名
+					// 例如："UserController#getUsers"格式
 					name = getNamingStrategy().getName(handlerMethod, mapping);
+					// 将映射名称与处理器方法关联，建立名称索引
 					addMappingName(name, handlerMethod);
 				}
+
 
 				CorsConfiguration corsConfig = initCorsConfiguration(handler, method, mapping);
 				if (corsConfig != null) {
@@ -680,13 +780,17 @@ public abstract class AbstractHandlerMethodMapping<T> extends AbstractHandlerMap
 					this.corsLookup.put(handlerMethod, corsConfig);
 				}
 
+				// 将完整的映射注册信息存储到主注册表中
+				// MappingRegistration封装了映射的所有相关信息
+				// 路径 --->方法和注解信息 再根据路径找处理方法
 				this.registry.put(mapping,
 						new MappingRegistration<>(mapping, handlerMethod, directPaths, name, corsConfig != null));
-			}
-			finally {
+			} finally {
+				// 确保写锁最终被释放，避免死锁
 				this.readWriteLock.writeLock().unlock();
 			}
 		}
+
 
 		private void validateMethodMapping(HandlerMethod handlerMethod, T mapping) {
 			MappingRegistration<T> registration = this.registry.get(mapping);
