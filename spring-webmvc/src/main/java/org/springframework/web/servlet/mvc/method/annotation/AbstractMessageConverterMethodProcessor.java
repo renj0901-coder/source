@@ -151,75 +151,119 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 	}
 
 	/**
-	 * Writes the given return type to the given output message.
-	 * @param value the value to write to the output message
-	 * @param returnType the type of the value
-	 * @param inputMessage the input messages. Used to inspect the {@code Accept} header.
-	 * @param outputMessage the output message to write to
-	 * @throws IOException thrown in case of I/O errors
-	 * @throws HttpMediaTypeNotAcceptableException thrown when the conditions indicated
-	 * by the {@code Accept} header on the request cannot be met by the message converters
-	 * @throws HttpMessageNotWritableException thrown if a given message cannot
-	 * be written by a converter, or if the content-type chosen by the server
-	 * has no compatible converter.
+	 * 使用HttpMessageConverter将返回值写入HTTP响应的核心方法
+	 * <p>
+	 * 该方法是Spring MVC处理@ResponseBody和ResponseEntity返回值的核心逻辑，负责：
+	 * 1. 确定响应体内容和类型
+	 * 2. 执行内容协商（Content Negotiation）
+	 * 3. 选择合适的HttpMessageConverter
+	 * 4. 应用ResponseBodyAdvice拦截器
+	 * 5. 序列化数据并写入响应
+	 * <p>
+	 * 处理流程：
+	 * 1. 准备响应体数据和类型信息
+	 * 2. 处理资源类型和范围请求
+	 * 3. 确定响应的媒体类型（内容协商）
+	 * 4. 选择并使用合适的消息转换器
+	 * 5. 应用安全防护措施
+	 *
+	 * @see RequestMappingHandlerAdapter#RequestMappingHandlerAdapter()
+	 *      RequestMappingHandlerAdapter的构造方法中初始化了默认的HttpMessageConverter列表
+	 *
+	 * SpringMVC会有4个HttpMessageConverter：
+	 * 1. ByteArrayHttpMessageConverter：处理返回值为字节数组的情况，把字节数组返回给浏览器
+	 * 2. StringHttpMessageConverter：处理返回值为字符串的情况，把字符串按指定的编码序列号后返回给浏览器
+	 * 3. SourceHttpMessageConverter：处理返回值为XML对象的情况，比如把DOMSource对象返回给浏览器
+	 * 4. AllEncompassingFormHttpMessageConverter：处理返回值为MultiValueMap对象的情况
+	 *
+	 * @param value         要写入响应的返回值对象
+	 * @param returnType    方法返回值的参数信息
+	 * @param inputMessage  封装了HTTP请求的输入消息
+	 * @param outputMessage 封装了HTTP响应的输出消息
+	 * @param <T>           返回值的泛型类型
+	 * @throws IOException                         IO操作异常
+	 * @throws HttpMediaTypeNotAcceptableException 客户端Accept头指定的媒体类型不被支持
+	 * @throws HttpMessageNotWritableException     返回值无法被任何消息转换器序列化
 	 */
 	@SuppressWarnings({"rawtypes", "unchecked"})
 	protected <T> void writeWithMessageConverters(@Nullable T value, MethodParameter returnType,
-			ServletServerHttpRequest inputMessage, ServletServerHttpResponse outputMessage)
+												  ServletServerHttpRequest inputMessage, ServletServerHttpResponse outputMessage)
 			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException {
 
+		// 初始化响应体内容和类型信息
 		Object body;
 		Class<?> valueType;
 		Type targetType;
 
+		// 处理字符序列类型（String、StringBuilder等）
 		if (value instanceof CharSequence) {
+			// 直接转换为String
 			body = value.toString();
 			valueType = String.class;
 			targetType = String.class;
 		}
+		// 处理其他类型
 		else {
 			body = value;
+			// 获取返回值的实际类型
 			valueType = getReturnValueType(body, returnType);
+			// 解析泛型类型信息
 			targetType = GenericTypeResolver.resolveType(getGenericType(returnType), returnType.getContainingClass());
 		}
 
+		// 处理资源类型返回值（如文件下载）和HTTP范围请求
 		if (isResourceType(value, returnType)) {
+			// 设置支持范围请求的响应头
 			outputMessage.getHeaders().set(HttpHeaders.ACCEPT_RANGES, "bytes");
+
+			// 如果是范围请求（客户端请求部分内容）
 			if (value != null && inputMessage.getHeaders().getFirst(HttpHeaders.RANGE) != null &&
 					outputMessage.getServletResponse().getStatus() == 200) {
+
 				Resource resource = (Resource) value;
 				try {
+					// 解析请求的范围
 					List<HttpRange> httpRanges = inputMessage.getHeaders().getRange();
+					// 设置206 Partial Content状态码
 					outputMessage.getServletResponse().setStatus(HttpStatus.PARTIAL_CONTENT.value());
+					// 将资源转换为范围区域列表
 					body = HttpRange.toResourceRegions(httpRanges, resource);
 					valueType = body.getClass();
 					targetType = RESOURCE_REGION_LIST_TYPE;
-				}
-				catch (IllegalArgumentException ex) {
+				} catch (IllegalArgumentException ex) {
+					// 范围请求无效，返回416状态码
 					outputMessage.getHeaders().set(HttpHeaders.CONTENT_RANGE, "bytes */" + resource.contentLength());
 					outputMessage.getServletResponse().setStatus(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE.value());
 				}
 			}
 		}
 
+		// 内容协商：确定响应的媒体类型
 		MediaType selectedMediaType = null;
+		// 检查是否已预设Content-Type
 		MediaType contentType = outputMessage.getHeaders().getContentType();
 		boolean isContentTypePreset = contentType != null && contentType.isConcrete();
+
+		// 如果已预设具体的Content-Type，则直接使用
 		if (isContentTypePreset) {
 			if (logger.isDebugEnabled()) {
 				logger.debug("Found 'Content-Type:" + contentType + "' in response");
 			}
 			selectedMediaType = contentType;
 		}
+		// 否则执行内容协商
 		else {
 			HttpServletRequest request = inputMessage.getServletRequest();
 			List<MediaType> acceptableTypes;
+
+			// 获取客户端可接受的媒体类型（来自Accept头）
 			try {
 				acceptableTypes = getAcceptableMediaTypes(request);
-			}
-			catch (HttpMediaTypeNotAcceptableException ex) {
+			} catch (HttpMediaTypeNotAcceptableException ex) {
+				// 处理Accept头解析异常
 				int series = outputMessage.getServletResponse().getStatus() / 100;
 				if (body == null || series == 4 || series == 5) {
+					// 如果是错误响应，忽略内容并返回
 					if (logger.isDebugEnabled()) {
 						logger.debug("Ignoring error response content (if any). " + ex);
 					}
@@ -227,24 +271,34 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 				}
 				throw ex;
 			}
+
+			// 获取服务器可以生产的媒体类型
 			// 如果没有设置MediaType
 			// 通过HttpMessageConverter 介入、找到最合适的HttpMessageConverter， 获取对应设定的MediaType
 			List<MediaType> producibleTypes = getProducibleMediaTypes(request, valueType, targetType);
 
+			// 如果有返回值但没有可用的转换器，抛出异常
 			if (body != null && producibleTypes.isEmpty()) {
 				throw new HttpMessageNotWritableException(
 						"No converter found for return value of type: " + valueType);
 			}
+
+			// 执行内容协商：匹配客户端接受的类型和服务器可生产的类型
 			List<MediaType> mediaTypesToUse = new ArrayList<>();
 			for (MediaType requestedType : acceptableTypes) {
 				for (MediaType producibleType : producibleTypes) {
+					// 如果客户端接受的类型与服务器可生产的类型兼容
 					if (requestedType.isCompatibleWith(producibleType)) {
+						// 选择最具体的媒体类型
 						mediaTypesToUse.add(getMostSpecificMediaType(requestedType, producibleType));
 					}
 				}
 			}
+
+			// 如果没有匹配的媒体类型
 			if (mediaTypesToUse.isEmpty()) {
 				if (body != null) {
+					// 有返回值但不支持，抛出异常
 					throw new HttpMediaTypeNotAcceptableException(producibleTypes);
 				}
 				if (logger.isDebugEnabled()) {
@@ -253,14 +307,16 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 				return;
 			}
 
+			// 按特异性和质量值排序
 			MediaType.sortBySpecificityAndQuality(mediaTypesToUse);
 
+			// 选择第一个具体的媒体类型
 			for (MediaType mediaType : mediaTypesToUse) {
 				if (mediaType.isConcrete()) {
 					selectedMediaType = mediaType;
 					break;
-				}
-				else if (mediaType.isPresentIn(ALL_APPLICATION_MEDIA_TYPES)) {
+				} else if (mediaType.isPresentIn(ALL_APPLICATION_MEDIA_TYPES)) {
+					// 如果是应用类型，使用octet-stream
 					selectedMediaType = MediaType.APPLICATION_OCTET_STREAM;
 					break;
 				}
@@ -272,30 +328,47 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 			}
 		}
 
+		// 如果确定了媒体类型，则执行序列化写入
 		if (selectedMediaType != null) {
+			// 移除质量值（q值）
 			selectedMediaType = selectedMediaType.removeQualityValue();
+
+			// 遍历所有消息转换器，找到合适的转换器
 			for (HttpMessageConverter<?> converter : this.messageConverters) {
+				// 检查是否为泛型转换器
 				GenericHttpMessageConverter genericConverter = (converter instanceof GenericHttpMessageConverter ?
 						(GenericHttpMessageConverter<?>) converter : null);
+
+				// 检查转换器是否支持当前类型和媒体类型
 				if (genericConverter != null ?
 						((GenericHttpMessageConverter) converter).canWrite(targetType, valueType, selectedMediaType) :
 						converter.canWrite(valueType, selectedMediaType)) {
+
+					// 应用ResponseBodyAdvice拦截器
 					body = getAdvice().beforeBodyWrite(body, returnType, selectedMediaType,
 							(Class<? extends HttpMessageConverter<?>>) converter.getClass(),
 							inputMessage, outputMessage);
+
+					// 如果拦截器没有返回null，则继续处理
 					if (body != null) {
 						Object theBody = body;
+						// 记录调试日志
 						LogFormatUtils.traceDebug(logger, traceOn ->
 								"Writing [" + LogFormatUtils.formatValue(theBody, !traceOn) + "]");
+
+						// 添加内容处置头以防止RFD攻击
 						addContentDispositionHeader(inputMessage, outputMessage);
+
+						// 使用转换器写入响应
 						if (genericConverter != null) {
+							// 使用泛型转换器
 							genericConverter.write(body, targetType, selectedMediaType, outputMessage);
-						}
-						else {
+						} else {
+							// 使用普通转换器
 							((HttpMessageConverter) converter).write(body, selectedMediaType, outputMessage);
 						}
-					}
-					else {
+					} else {
+						// 拦截器返回null，不写入响应
 						if (logger.isDebugEnabled()) {
 							logger.debug("Nothing to write: null body");
 						}
@@ -305,15 +378,18 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 			}
 		}
 
+		// 如果没有找到合适的转换器
 		if (body != null) {
 			Set<MediaType> producibleMediaTypes =
 					(Set<MediaType>) inputMessage.getServletRequest()
 							.getAttribute(HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE);
 
+			// 如果已预设Content-Type或有可生产类型，抛出写入异常
 			if (isContentTypePreset || !CollectionUtils.isEmpty(producibleMediaTypes)) {
 				throw new HttpMessageNotWritableException(
 						"No converter for [" + valueType + "] with preset Content-Type '" + contentType + "'");
 			}
+			// 否则抛出媒体类型不可接受异常
 			throw new HttpMediaTypeNotAcceptableException(getSupportedMediaTypes(body.getClass()));
 		}
 	}

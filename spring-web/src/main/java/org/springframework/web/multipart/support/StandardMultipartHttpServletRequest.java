@@ -85,36 +85,89 @@ public class StandardMultipartHttpServletRequest extends AbstractMultipartHttpSe
 
 		super(request);
 		if (!lazyParsing) {
+			// 会取出来请求parts进行解析
 			parseRequest(request);
 		}
 	}
 
 
+	/**
+	 * 解析Servlet 3.0多部分请求，将Part对象转换为Spring的MultipartFile对象
+	 * <p>
+	 * 该方法是StandardMultipartHttpServletRequest的核心处理逻辑，负责：
+	 * 1. 从HttpServletRequest中获取所有Part对象
+	 * 2. 遍历每个Part并根据是否包含文件名来区分文件上传字段和普通表单字段
+	 * 3. 将文件上传Part包装为StandardMultipartFile对象
+	 * 4. 记录普通表单参数名称
+	 * 5. 将解析结果存储到父类的multipartFiles映射中
+	 * <p>
+	 * 解析过程：
+	 * 1. 调用request.getParts()获取所有上传部分
+	 * 2. 为每个Part解析Content-Disposition头部获取文件名
+	 * 3. 如果有文件名，则视为文件上传字段，创建StandardMultipartFile
+	 * 4. 如果没有文件名，则视为普通表单参数字段，记录参数名
+	 * 5. 将文件映射和参数名集合存储到相应属性中
+	 *
+	 * @param request 当前的HttpServletRequest对象，必须支持Servlet 3.0多部分处理
+	 * @throws MultipartException 当解析过程中发生任何异常时抛出
+	 */
 	private void parseRequest(HttpServletRequest request) {
 		try {
+			// 从Servlet 3.0请求中获取所有Part对象
+			// 这会触发Servlet容器的多部分解析机制
 			Collection<Part> parts = request.getParts();
+
+			// 初始化多部分参数名称集合，用于存储普通表单字段名称
+			// 使用LinkedHashSet保持插入顺序并避免重复
 			this.multipartParameterNames = new LinkedHashSet<>(parts.size());
+
+			// 创建存储文件的多值映射，键为字段名称，值为MultipartFile列表
+			// LinkedMultiValueMap保证了字段名称的插入顺序
 			MultiValueMap<String, MultipartFile> files = new LinkedMultiValueMap<>(parts.size());
+
+			// 遍历所有Part对象进行分类处理
 			for (Part part : parts) {
+				// 获取Content-Disposition头部，包含字段名称和文件名等信息
 				String headerValue = part.getHeader(HttpHeaders.CONTENT_DISPOSITION);
+
+				// 解析Content-Disposition头部，提取相关信息
 				ContentDisposition disposition = ContentDisposition.parse(headerValue);
+
+				// 获取文件名，如果为null则表示这不是文件上传字段
 				String filename = disposition.getFilename();
+
+				// **** 判断是否为文件上传字段
 				if (filename != null) {
+					// 处理文件名编码问题
+					// 如果文件名以"=?"开头并以"?="结尾，说明是MIME编码的文件名
 					if (filename.startsWith("=?") && filename.endsWith("?=")) {
+						// 使用JavaMail API解码MIME编码的文件名
 						filename = MimeDelegate.decode(filename);
 					}
+
+					// 将Part包装为Spring的MultipartFile接口实现
+					// StandardMultipartFile提供了对Part对象的适配
 					files.add(part.getName(), new StandardMultipartFile(part, filename));
 				}
+				// 普通表单参数字段处理
 				else {
+					// 将参数名称添加到多部分参数名称集合中
+					// 这些参数可以通过getParameter等方法访问
 					this.multipartParameterNames.add(part.getName());
 				}
 			}
+
+			// 将解析出的文件映射设置到父类AbstractMultipartHttpServletRequest中
+			// 使得可以通过getFiles、getFile等方法访问上传的文件
 			setMultipartFiles(files);
 		}
+		// 捕获解析过程中可能发生的任何异常
 		catch (Throwable ex) {
+			// 统一处理解析失败情况
 			handleParseFailure(ex);
 		}
 	}
+
 
 	protected void handleParseFailure(Throwable ex) {
 		String msg = ex.getMessage();

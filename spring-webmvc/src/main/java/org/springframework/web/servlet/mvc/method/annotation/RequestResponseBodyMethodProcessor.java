@@ -170,17 +170,72 @@ public class RequestResponseBodyMethodProcessor extends AbstractMessageConverter
 		return (requestBody != null && requestBody.required() && !parameter.isOptional());
 	}
 
+	/**
+	 * 处理被@ResponseBody注解标记的方法返回值，将其序列化并写入HTTP响应体
+	 * <p>
+	 * 该方法是Spring MVC处理RESTful API响应的核心逻辑，负责：
+	 * 1. 标记请求已被处理完毕（不需要视图解析）
+	 * 2. 创建输入和输出消息对象用于HTTP通信
+	 * 3. 通过HttpMessageConverter将返回值序列化为适当的格式（JSON、XML等）
+	 * 4. 根据客户端Accept头和服务器支持的内容类型进行内容协商
+	 * <p>
+	 * 处理流程：
+	 * 1. 设置ModelAndViewContainer的requestHandled标志为true，表示请求处理完成
+	 * 2. 创建ServletServerHttpRequest和ServletServerHttpResponse对象封装HTTP消息
+	 * 3. 调用writeWithMessageConverters方法执行实际的序列化和写入操作
+	 * 4. 异常处理由调用方（DispatcherServlet）统一处理
+	 *
+	 * @param returnValue  控制器方法的返回值，可以是任何Java对象
+	 * @param returnType   返回值的方法参数信息，包含返回类型和注解等元数据
+	 * @param mavContainer ModelAndView容器，用于存储模型数据和视图信息
+	 * @param webRequest   当前的Web请求对象，提供对HTTP请求和响应的访问
+	 * @throws IOException                         IO操作异常
+	 * @throws HttpMediaTypeNotAcceptableException 客户端Accept头指定的媒体类型不被支持
+	 * @throws HttpMessageNotWritableException     返回值无法被任何消息转换器序列化
+	 *                                             <p>
+	 *                                             使用示例：
+	 *                                             <pre>{@code
+	 *                                             @RestController
+	 *                                             public class UserController {
+	 *                                                 @GetMapping("/user/{id}")
+	 *                                                 @ResponseBody
+	 *                                                 public User getUser(@PathVariable Long id) {
+	 *                                                     return userService.findById(id);
+	 *                                                 }
+	 *
+	 *                                                 @PostMapping("/user")
+	 *                                                 public ResponseEntity<User> createUser(@RequestBody User user) {
+	 *                                                     User savedUser = userService.save(user);
+	 *                                                     return ResponseEntity.ok(savedUser);
+	 *                                                 }
+	 *                                             }
+	 *                                             }</pre>
+	 * @see #writeWithMessageConverters(Object, MethodParameter, ServletServerHttpRequest, ServletServerHttpResponse)
+	 * @see org.springframework.http.converter.HttpMessageConverter
+	 * @see org.springframework.web.accept.ContentNegotiationManager
+	 */
 	@Override
 	public void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType,
-			ModelAndViewContainer mavContainer, NativeWebRequest webRequest)
+								  ModelAndViewContainer mavContainer, NativeWebRequest webRequest)
 			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException {
 
+		// 标记请求已被处理，不需要进一步的视图解析和渲染
+		// 这告诉DispatcherServlet不需要查找视图来渲染ModelAndView
 		mavContainer.setRequestHandled(true);
+
+		// 创建ServletServerHttpRequest对象，封装HTTP请求信息
+		// 用于在消息转换过程中访问请求头、请求方法等信息
 		ServletServerHttpRequest inputMessage = createInputMessage(webRequest);
+
+		// 创建ServletServerHttpResponse对象，封装HTTP响应信息
+		// 用于向客户端写入响应头和响应体数据
 		ServletServerHttpResponse outputMessage = createOutputMessage(webRequest);
 
-		// 通过MessageConverters 写数据
+		// @ResponseBody注解处理返回值的核心逻辑
+		// 通过HttpMessageConverters将返回值序列化并写入响应体
+		// 这个方法会执行内容协商，选择合适的转换器，并设置相应的内容类型头
 		writeWithMessageConverters(returnValue, returnType, inputMessage, outputMessage);
 	}
+
 
 }

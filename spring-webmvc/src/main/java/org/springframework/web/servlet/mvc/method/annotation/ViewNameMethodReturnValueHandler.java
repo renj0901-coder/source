@@ -79,12 +79,19 @@ public class ViewNameMethodReturnValueHandler implements HandlerMethodReturnValu
 			ModelAndViewContainer mavContainer, NativeWebRequest webRequest) throws Exception {
 
 		if (returnValue instanceof CharSequence) {
+			// 将返回值转换为字符串，作为视图名称
 			String viewName = returnValue.toString();
+
+			// 设置 ModelAndViewContainer 中的视图名称
 			mavContainer.setViewName(viewName);
+
+			// 判断是否是重定向视图（例如以 "redirect:" 开头或匹配自定义前缀）
+			// 如果是，则标记为重定向场景，后续会触发重定向逻辑
 			if (isRedirectViewName(viewName)) {
 				mavContainer.setRedirectModelScenario(true);
 			}
 		}
+
 		else if (returnValue != null) {
 			// should not happen
 			throw new UnsupportedOperationException("Unexpected return type: " +

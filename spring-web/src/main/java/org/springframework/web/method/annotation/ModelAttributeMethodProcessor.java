@@ -102,15 +102,36 @@ public class ModelAttributeMethodProcessor implements HandlerMethodArgumentResol
 
 
 	/**
-	 * Returns {@code true} if the parameter is annotated with
-	 * {@link ModelAttribute} or, if in default resolution mode, for any
-	 * method parameter that is not a simple type.
+	 * 判断当前参数是否支持使用 ModelAttribute 方式进行解析
+	 * <p>
+	 * 支持以下两种情况：
+	 * 1. 参数被 @ModelAttribute 注解标记
+	 * 2. 在默认解析模式下（annotationNotRequired=true），任何非简单类型的参数
+	 * <p>
+	 * 简单类型包括：基本数据类型、String、Class、Date 等，这些类型通常由其他解析器处理
+	 * 非简单类型通常指 POJO 对象，会通过数据绑定方式从请求参数中填充属性
+	 *
+	 * @param parameter 方法参数的元数据信息
+	 * @return true-支持ModelAttribute方式解析，false-不支持
 	 */
 	@Override
 	public boolean supportsParameter(MethodParameter parameter) {
-		return (parameter.hasParameterAnnotation(ModelAttribute.class) ||
-				(this.annotationNotRequired && !BeanUtils.isSimpleProperty(parameter.getParameterType())));
+		// 情况1：参数明确标注了 @ModelAttribute 注解
+		// 例如：public String save(@ModelAttribute User user)
+		if (parameter.hasParameterAnnotation(ModelAttribute.class)) {
+			return true;
+		}
+
+		// 情况2：在默认解析模式下，处理所有非简单类型参数
+		// 即使没有 @ModelAttribute 注解也会自动处理
+		// 例如：public String save(User user) - User 类会被自动识别为模型属性
+		if (this.annotationNotRequired && !BeanUtils.isSimpleProperty(parameter.getParameterType())) {
+			return true;
+		}
+
+		return false;
 	}
+
 
 	/**
 	 * Resolve the argument from the model or if not found instantiate it with
@@ -142,10 +163,25 @@ public class ModelAttributeMethodProcessor implements HandlerMethodArgumentResol
 			attribute = mavContainer.getModel().get(name);
 		}
 		else {
-			// Create attribute instance  解析属性 ：单个参数： 通过request.getParameter解析参数  ；  pojo:  通过构造函数进行实例化，
+			// Create attribute instance  解析属性 ：单个参数： 通过request.getParameter解析参数  ；  pojo: 通过构造函数进行实例化，
 			try {
+				/**
+				 * 创建模型属性实例并进行初始化
+				 *
+				 * 该方法负责创建目标对象实例，支持以下两种创建方式：
+				 * 1. 对于无参构造函数的类：直接通过 newInstance() 创建实例
+				 * 2. 对于有参构造函数的类（如数据类）：通过构造函数参数绑定请求参数来创建实例
+				 *
+				 * @param name           模型属性名称，通常为类名首字母小写（如 "user"）
+				 * @param parameter      方法参数信息，包含目标类型和注解等元数据
+				 * @param binderFactory  数据绑定工厂，用于创建 WebDataBinder 实例
+				 * @param webRequest     当前的 Web 请求对象，用于获取请求参数
+				 * @return 创建的模型属性实例
+				 * @throws Exception 创建过程中可能抛出的异常，如绑定异常、实例化异常等
+				 */
 				attribute = createAttribute(name, parameter, binderFactory, webRequest);
 			}
+
 			catch (BindException ex) {
 				if (isBindExceptionRequired(parameter)) {
 					// No BindingResult parameter -> fail with BindException

@@ -1406,39 +1406,64 @@ protected void doDispatch(HttpServletRequest request, HttpServletResponse respon
 	}
 
 	/**
-	 * Convert the request into a multipart request, and make multipart resolver available.
-	 * <p>If no multipart resolver is set, simply use the existing request.
-	 * @param request current HTTP request
-	 * @return the processed request (multipart wrapper if necessary)
-	 * @see MultipartResolver#resolveMultipart
+	 * 检查并处理多部分请求（如文件上传）
+	 * <p>
+	 * 该方法负责检测当前请求是否为多部分请求（multipart request），如果是则使用配置的多部分解析器
+	 * 对请求进行解析和包装，以便后续处理器能够方便地访问上传的文件和普通表单数据。
+	 * <p>
+	 * 处理逻辑：
+	 * 1. 首先检查是否配置了多部分解析器且当前请求是多部分请求
+	 * 2. 如果请求已经被解析过（已经是MultipartHttpServletRequest类型），则直接返回
+	 * 3. 如果之前处理多部分请求时发生过异常，则跳过多部分解析以避免干扰错误处理
+	 * 4. 否则尝试使用多部分解析器解析请求
+	 * 5. 如果解析过程中发生异常，根据是否为错误分发来决定是继续处理还是抛出异常
+	 * 6. 如果没有多部分解析器或不是多部分请求，则返回原始请求
+	 *
+	 * @param request 当前的HTTP请求对象
+	 * @return 处理后的请求对象，可能是：
+	 * - 原始请求（非多部分请求或无多部分解析器）
+	 * - 被MultipartResolver包装后的MultipartHttpServletRequest（多部分请求）
+	 * @throws MultipartException 当多部分解析失败且不是错误分发时抛出
 	 */
 	protected HttpServletRequest checkMultipart(HttpServletRequest request) throws MultipartException {
+		// 检查是否存在多部分解析器且当前请求是多部分请求
 		if (this.multipartResolver != null && this.multipartResolver.isMultipart(request)) {
+			// 检查请求是否已经被解析为MultipartHttpServletRequest
+			// 这种情况可能发生在请求已经被MultipartFilter等过滤器处理过
 			if (WebUtils.getNativeRequest(request, MultipartHttpServletRequest.class) != null) {
+				// 只有在REQUEST分发类型下才记录日志（避免在FORWARD、INCLUDE等分发类型下重复记录）
 				if (DispatcherType.REQUEST.equals(request.getDispatcherType())) {
 					logger.trace("Request already resolved to MultipartHttpServletRequest, e.g. by MultipartFilter");
 				}
 			}
+			// 检查请求是否之前在处理多部分请求时发生过异常
+			// 如果有异常，则跳过多部分解析以避免干扰错误页面的渲染
 			else if (hasMultipartException(request)) {
 				logger.debug("Multipart resolution previously failed for current request - " +
 						"skipping re-resolution for undisturbed error rendering");
 			}
+			// 尝试解析多部分请求
 			else {
 				try {
+					// 使用配置的多部分解析器解析请求，返回包装后的MultipartHttpServletRequest
+					// ***这个包装后的请求可以方便地访问上传的文件和普通请求参数
 					return this.multipartResolver.resolveMultipart(request);
 				}
+				// 捕获多部分解析过程中可能发生的异常
 				catch (MultipartException ex) {
+					// 检查当前是否为错误分发（即正在处理之前发生的异常）
 					if (request.getAttribute(WebUtils.ERROR_EXCEPTION_ATTRIBUTE) != null) {
+						// 如果是错误分发，则记录调试日志并继续使用原始请求处理错误
 						logger.debug("Multipart resolution failed for error dispatch", ex);
-						// Keep processing error dispatch with regular request handle below
-					}
-					else {
+						// 继续使用原始请求处理错误分发
+					} else {
+						// 如果不是错误分发，则抛出异常中断正常请求处理流程
 						throw ex;
 					}
 				}
 			}
 		}
-		// If not returned before: return original request.
+		// 如果没有多部分解析器或者不是多部分请求，返回原始请求
 		return request;
 	}
 

@@ -53,9 +53,9 @@ import org.springframework.web.multipart.MultipartResolver;
  *
  * <pre class="code">
  * public class AppInitializer extends AbstractAnnotationConfigDispatcherServletInitializer {
- *	 // ...
- *	 &#064;Override
- *	 protected void customizeRegistration(ServletRegistration.Dynamic registration) {
+ * 	 // ...
+ * 	 &#064;Override
+ * 	 protected void customizeRegistration(ServletRegistration.Dynamic registration) {
  *     // Optionally also set maxFileSize, maxRequestSize, fileSizeThreshold
  *     registration.setMultipartConfig(new MultipartConfigElement("/tmp"));
  *   }
@@ -63,11 +63,11 @@ import org.springframework.web.multipart.MultipartResolver;
  * </pre>
  *
  * @author Juergen Hoeller
- * @since 3.1
  * @see #setResolveLazily
  * @see #setStrictServletCompliance
  * @see HttpServletRequest#getParts()
  * @see org.springframework.web.multipart.commons.CommonsMultipartResolver
+ * @since 3.1
  */
 public class StandardServletMultipartResolver implements MultipartResolver {
 
@@ -83,6 +83,7 @@ public class StandardServletMultipartResolver implements MultipartResolver {
 	 * corresponding exceptions at the time of the {@link #resolveMultipart} call.
 	 * Switch this to "true" for lazy multipart parsing, throwing parse exceptions
 	 * once the application attempts to obtain multipart files or parameters.
+	 *
 	 * @since 3.2.9
 	 */
 	public void setResolveLazily(boolean resolveLazily) {
@@ -104,6 +105,7 @@ public class StandardServletMultipartResolver implements MultipartResolver {
 	 * {@link org.springframework.web.multipart.commons.CommonsMultipartResolver}
 	 * supports any "multipart/" request type. However, it restricts processing
 	 * to POST requests which standard Servlet multipart parsers might not do.
+	 *
 	 * @since 5.3.9
 	 */
 	public void setStrictServletCompliance(boolean strictServletCompliance) {
@@ -113,9 +115,21 @@ public class StandardServletMultipartResolver implements MultipartResolver {
 
 	@Override
 	public boolean isMultipart(HttpServletRequest request) {
+		// 判断当前请求是否为多部分请求（multipart request）
+		// 通过检查请求的Content-Type头部来确定
+
+		// 如果启用了严格Servlet合规模式（strictServletCompliance = true）：
+		//   - 只有Content-Type为"multipart/form-data"的请求才被认为是多部分请求
+		//   - 这符合Servlet规范，确保只处理标准的表单文件上传请求
+		//
+		// 如果未启用严格Servlet合规模式（strictServletCompliance = false）：
+		//   - Content-Type以"multipart/"开头的请求都被认为是多部分请求
+		//   - 这包括"multipart/form-data"、"multipart/mixed"等其他多部分类型
+		//   - 提供更广泛的多部分请求支持，但可能因容器实现差异导致兼容性问题
 		return StringUtils.startsWithIgnoreCase(request.getContentType(),
 				(this.strictServletCompliance ? MediaType.MULTIPART_FORM_DATA_VALUE : "multipart/"));
 	}
+
 
 	@Override
 	public MultipartHttpServletRequest resolveMultipart(HttpServletRequest request) throws MultipartException {
@@ -134,8 +148,7 @@ public class StandardServletMultipartResolver implements MultipartResolver {
 						part.delete();
 					}
 				}
-			}
-			catch (Throwable ex) {
+			} catch (Throwable ex) {
 				LogFactory.getLog(getClass()).warn("Failed to perform cleanup of multipart items", ex);
 			}
 		}

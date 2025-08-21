@@ -126,29 +126,41 @@ public class RequestParamMethodArgumentResolver extends AbstractNamedValueMethod
 	@Override
 	public boolean supportsParameter(MethodParameter parameter) {
 		if (parameter.hasParameterAnnotation(RequestParam.class)) {
+			// 如果参数被 @RequestParam 注解修饰
 			if (Map.class.isAssignableFrom(parameter.nestedIfOptional().getNestedParameterType())) {
+				// 且该参数类型是 Map 的子类（如 HashMap、LinkedHashMap 等）
+				// 则需要检查 @RequestParam 是否指定了 name 属性
 				RequestParam requestParam = parameter.getParameterAnnotation(RequestParam.class);
 				return (requestParam != null && StringUtils.hasText(requestParam.name()));
-			}
-			else {
+				// 只有当 @RequestParam 指定了 name 时才支持，否则由 RequestParamMapMethodArgumentResolver 处理
+			} else {
+				// 对于非 Map 类型的 @RequestParam 参数，直接支持
 				return true;
 			}
-		}
-		else {
+		} else {
+			// 如果没有 @RequestParam 注解，则判断是否为其他类型的参数
 			if (parameter.hasParameterAnnotation(RequestPart.class)) {
+				// 如果是 @RequestPart 注解，则不支持（由 RequestPartMethodArgumentResolver 处理）
 				return false;
 			}
+
+			// 获取嵌套的参数类型（处理 Optional<T> 场景）
 			parameter = parameter.nestedIfOptional();
+
 			if (MultipartResolutionDelegate.isMultipartArgument(parameter)) {
+				// 如果是 MultipartFile 或 Part 类型（用于文件上传），则支持
 				return true;
-			}
-			else if (this.useDefaultResolution) {
+			} else if (this.useDefaultResolution) {
+				// 如果启用了默认解析模式（useDefaultResolution = true）
+				// 则对简单类型（如 int、String、long 等）也进行自动解析
+				// 即使没有 @RequestParam 注解也会当作请求参数处理
 				return BeanUtils.isSimpleProperty(parameter.getNestedParameterType());
-			}
-			else {
+			} else {
+				// 否则不支持
 				return false;
 			}
 		}
+
 	}
 
 	@Override
@@ -157,42 +169,67 @@ public class RequestParamMethodArgumentResolver extends AbstractNamedValueMethod
 		return (ann != null ? new RequestParamNamedValueInfo(ann) : new RequestParamNamedValueInfo());
 	}
 
+	/**
+	 * 根据参数名解析请求中的参数值
+	 *
+	 * @param name       请求参数的名称，用于从请求中查找对应的参数值
+	 *                   --如果方法参数上使用了 @RequestParam("paramName") 注解，则 name 就是注解中指定的值。
+	 * 					--如果没有显式指定，则默认为方法参数的名称（通过 parameter.getParameterName() 获取）
+	 * @param parameter  方法参数的元数据信息，包含参数类型、注解等信息
+	 * @param request    当前的请求对象，用于访问请求参数和文件上传数据
+	 * @return 解析出的参数值，可能为 String、String[]、MultipartFile 或 List<MultipartFile>
+	 * @throws Exception 解析过程中可能抛出的异常
+	 */
 	@Override
 	@Nullable
 	protected Object resolveName(String name, MethodParameter parameter, NativeWebRequest request) throws Exception {
+		// 1. 尝试从 multipart 请求中解析参数（文件上传场景）
 		HttpServletRequest servletRequest = request.getNativeRequest(HttpServletRequest.class);
 
 		if (servletRequest != null) {
+			// 使用 MultipartResolutionDelegate 解析 multipart 参数
+			// 如果是文件上传请求，会尝试解析为 MultipartFile 或 List<MultipartFile>
 			Object mpArg = MultipartResolutionDelegate.resolveMultipartArgument(name, parameter, servletRequest);
+
 			if (mpArg != MultipartResolutionDelegate.UNRESOLVABLE) {
+				// 如果成功解析出 multipart 参数，则直接返回
 				return mpArg;
 			}
 		}
 
+		// 2. 如果不是 multipart 请求，或未找到 multipart 参数，则尝试从普通请求中获取
 		Object arg = null;
 		MultipartRequest multipartRequest = request.getNativeRequest(MultipartRequest.class);
+
 		if (multipartRequest != null) {
+			// 获取指定名称的文件列表
 			List<MultipartFile> files = multipartRequest.getFiles(name);
 			if (!files.isEmpty()) {
+				// 如果只有一个文件，返回单个 MultipartFile 对象
+				// 如果有多个文件，返回 List<MultipartFile> 列表
 				arg = (files.size() == 1 ? files.get(0) : files);
 			}
 		}
+
+		// 3. 如果仍未找到文件参数，则尝试从标准 HTTP 请求参数中获取
 		if (arg == null) {
-			// *解析参数值 ： 通过request.getParameterValues方式获取请求参数
+			// *解析参数值：通过 request.getParameterValues 方式获取请求参数
 			// 当通过多部分解析未获取到参数值时，尝试从标准HTTP请求参数中获取
-			// getParameterValues方法可以处理同名的多个参数值（如复选框等场景）
+			// getParameterValues 方法可以处理同名的多个参数值（如复选框等场景）
 			String[] paramValues = request.getParameterValues(name);
+
 			if (paramValues != null) {
 				// 如果参数值存在，根据参数数量决定返回单个值还是数组
-				// 当只有一个参数值时，返回该值本身（String类型）
-				// 当有多个同名参数值时，返回整个数组（String[]类型）
-				// 这种设计支持了HTML表单中多选框等可以提交多个同名参数的场景
+				// 当只有一个参数值时，返回该值本身（String 类型）
+				// 当有多个同名参数值时，返回整个数组（String[] 类型）
+				// 这种设计支持了 HTML 表单中多选框等可以提交多个同名参数的场景
 				arg = (paramValues.length == 1 ? paramValues[0] : paramValues);
 			}
 		}
 
 		return arg;
 	}
+
 
 	@Override
 	protected void handleMissingValue(String name, MethodParameter parameter, NativeWebRequest request)

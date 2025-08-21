@@ -200,20 +200,70 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 	private final Map<ControllerAdviceBean, Set<Method>> modelAttributeAdviceCache = new LinkedHashMap<>();
 
 
+	/**
+	 * RequestMappingHandlerAdapter的默认构造函数
+	 * <p>
+	 * 负责初始化默认的消息转换器列表，这些转换器用于处理HTTP请求和响应中的数据序列化/反序列化
+	 * <p>
+	 * 默认配置的消息转换器支持常见的数据格式：
+	 * 1. 字节数组格式 - 处理原始二进制数据
+	 * 2. 字符串格式 - 处理文本数据
+	 * 3. XML格式 - 处理XML数据（可选，依赖于XML支持）
+	 * 4. 表单数据格式 - 处理HTML表单提交和multipart数据
+	 * <p>
+	 * 这些转换器按照添加顺序在内容协商时被依次尝试，第一个支持特定类型和媒体类型的转换器将被使用
+	 * <p>
+	 * 初始化时机：
+	 * - 在Spring容器创建RequestMappingHandlerAdapter Bean时调用
+	 * - 在afterPropertiesSet()方法执行之前完成
+	 * - 确保在第一次处理请求前所有必要的转换器都已准备就绪
+	 *
+	 * @see #setMessageConverters(List)
+	 * @see #afterPropertiesSet()
+	 * @see org.springframework.http.converter.HttpMessageConverter
+	 */
 	public RequestMappingHandlerAdapter() {
+		// 初始化消息转换器列表，预设容量为4以避免频繁扩容
 		this.messageConverters = new ArrayList<>(4);
+
+		// 添加字节数组消息转换器
+		// 用于处理byte[]类型的请求体和响应体
+		// 支持的媒体类型：application/octet-stream
+		// 常用于文件下载、二进制数据传输等场景
 		this.messageConverters.add(new ByteArrayHttpMessageConverter());
+
+		// 添加字符串消息转换器
+		// 用于处理String类型的请求体和响应体
+		// 支持的媒体类型：text/plain, text/html, application/json等文本类型
+		// 是最常用的消息转换器之一，处理JSON、XML等文本格式
 		this.messageConverters.add(new StringHttpMessageConverter());
+
+		// 条件性添加XML消息转换器
+		// 只有在不忽略XML且相关依赖可用时才添加
 		if (!shouldIgnoreXml) {
 			try {
+				// 添加XML源消息转换器
+				// 用于处理javax.xml.transform.Source类型的XML数据
+				// 支持的媒体类型：application/xml, text/xml
+				// 需要JAXP相关依赖（如TransformerFactory实现）
 				this.messageConverters.add(new SourceHttpMessageConverter<>());
-			}
-			catch (Error err) {
-				// Ignore when no TransformerFactory implementation is available
+			} catch (Error err) {
+				// 当没有可用的TransformerFactory实现时忽略
+				// 这种情况通常发生在缺少XML处理库时
+				// 不影响其他消息转换器的正常使用
 			}
 		}
+
+		// 添加全 encompassing 表单消息转换器
+		// 用于处理表单数据和multipart请求
+		// 支持的媒体类型：
+		// - application/x-www-form-urlencoded（标准表单数据）
+		// - multipart/form-data（文件上传）
+		// - multipart/mixed（混合multipart数据）
+		// 这是一个复合转换器，内部集成了多个子转换器来处理不同类型的表单数据
 		this.messageConverters.add(new AllEncompassingFormHttpMessageConverter());
 	}
+
 
 
 	/**
@@ -1117,7 +1167,7 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 				});
 				invocableMethod = invocableMethod.wrapConcurrentResult(result);
 			}
-			// ****对请求参数进行处理，调用目标HandlerMethod，并且将返回值封装为一个ModelAndView对象
+			// ****对请求参数进行处理，调用目标HandlerMethod，并且将返回值封装为一个ModelAndView对象***
 			invocableMethod.invokeAndHandle(webRequest, mavContainer);
 			if (asyncManager.isConcurrentHandlingStarted()) {
 				return null;
